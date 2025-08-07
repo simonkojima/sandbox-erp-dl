@@ -178,7 +178,7 @@ if __name__ == "__main__":
         history_fname=(save_base / "history" / f"sub-{subject}"),
         checkpoint_fname=(save_base / "checkpoint" / f"sub-{subject}.pth"),
         desc="eegnet4.2/drop_prob=0.25",
-        enable_wandb_logging=False,
+        enable_wandb_logging=True,
         wandb_params={
             "config": {
                 "lr": lr,
