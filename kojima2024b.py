@@ -82,7 +82,7 @@ def func_get_model(X, y):
 
 if __name__ == "__main__":
 
-    subject = 5
+    subject = 1
     tmin = 0.0
     tmax = 1.0
     l_freq = 0.1
@@ -95,7 +95,7 @@ if __name__ == "__main__":
     lr = 1e-3
     weight_decay = 1e-2
     n_epochs = 500
-    batch_size = 8
+    batch_size = 64
     patience = 75
     enable_euclidean_alignment = False
     enable_normalization = True
@@ -142,7 +142,9 @@ if __name__ == "__main__":
         )
         epochs.load_data()
 
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor([1.0, 3.0]).to(device))
+    # criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor([3.0, 1.0]).to(device))
+    # criterion = torch.nn.CrossEntropyLoss()
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR
     scheduler_params = {"T_max": n_epochs, "eta_min": 1e-6}
     optimizer = torch.optim.AdamW
@@ -174,9 +176,9 @@ if __name__ == "__main__":
         enable_normalization=enable_normalization,
         name_classifier="eegnet4.2",
         history_fname=(save_base / "history" / f"sub-{subject}"),
-        checkpoint_fname=(save_base / "checkpoint" / f"sub-{subject}"),
+        checkpoint_fname=(save_base / "checkpoint" / f"sub-{subject}.pth"),
         desc="eegnet4.2/drop_prob=0.25",
-        enable_wandb_logging=True,
+        enable_wandb_logging=False,
         wandb_params={
             "config": {
                 "lr": lr,
@@ -195,6 +197,12 @@ if __name__ == "__main__":
 
     probas = results.loc[0]["probas"]
     labels = results.loc[0]["labels"]
+    preds = results.loc[0]["preds"]
+
+    f1 = sklearn.metrics.f1_score(labels, preds)
+    bacc = sklearn.metrics.balanced_accuracy_score(labels, preds)
 
     auc = sklearn.metrics.roc_auc_score(labels, probas[:, 1])
+    print(f"BACC: {bacc}")
+    print(f"F1: {f1}")
     print(f"AUC: {auc}")
