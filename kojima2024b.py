@@ -1,5 +1,6 @@
 import os
 import moabb
+import datetime
 import rosoku
 import torch
 from pathlib import Path
@@ -53,7 +54,7 @@ def epochs_from_raws(raws, tmin, tmax, l_freq, h_freq, order_filter):
 
 
 def func_proc_epochs(epochs, mode):
-    epochs = epochs.pick(picks="eeg")
+    epochs = epochs.pick(picks="eeg").crop(tmin=0.0, tmax=1.0)
     return epochs
 
 
@@ -61,73 +62,116 @@ def func_load_epochs(keywords, mode, epochs):
     return epochs[keywords]
 
 
-def func_get_model(X, y):
+def func_get_model(X, y, classifier):
     _, n_chans, n_times = X.shape
 
-    if False:
-        F1 = 4
-        D = 2
-        F2 = F1 * D
+    match classifier:
+        case "eegnet4.2":
+            F1 = 4
+            D = 2
+            F2 = F1 * D
 
-        model = braindecode.models.EEGNetv4(
-            n_chans=n_chans,
-            n_outputs=2,
-            n_times=n_times,
-            F1=F1,
-            D=D,
-            F2=F2,
-            drop_prob=0.5,
-        )
-    if True:
-        model = braindecode.models.EEGInceptionERP(
-            n_chans=n_chans,
-            n_outputs=2,
-            n_times=n_times,
-            sfreq=128,
-        )
+            model = braindecode.models.EEGNetv4(
+                n_chans=n_chans,
+                n_outputs=2,
+                n_times=n_times,
+                F1=F1,
+                D=D,
+                F2=F2,
+                drop_prob=0.5,
+            )
+        case "eegnet8.2":
+            F1 = 8
+            D = 2
+            F2 = F1 * D
+
+            model = braindecode.models.EEGNetv4(
+                n_chans=n_chans,
+                n_outputs=2,
+                n_times=n_times,
+                F1=F1,
+                D=D,
+                F2=F2,
+                drop_prob=0.5,
+            )
+
+        case "EEGInceptionERP":
+            model = braindecode.models.EEGInceptionERP(
+                n_chans=n_chans,
+                n_outputs=2,
+                n_times=n_times,
+                sfreq=128,
+            )
+
+        case "DeepConvNet":
+            model = braindecode.models.Deep4Net(
+                n_chans=n_chans,
+                n_outputs=2,
+                n_times=n_times,
+                final_conv_length="auto",
+                pool_time_length=2,
+                pool_time_stride=2,
+                filter_time_length=5,
+            )
+
+        case "ShallowConvNet":
+            model = braindecode.models.ShallowFBCSPNet(
+                n_chans=n_chans,
+                n_outputs=2,
+                n_times=n_times,
+                final_conv_length="auto",
+            )
 
     return model
 
 
-if __name__ == "__main__":
-
-    subject = 1
+def main(timestamp, subject, classifier, resample):
     tmin = 0.0
     tmax = 1.2
     l_freq = 0.1
     h_freq = 40
     order_filter = 2
-    resample = 128
+    # resample = 128
 
-    force_epoching = True
+    force_epoching = False
 
-    # lr = 1e-3
-    # weight_decay = 1e-2
     n_epochs = 500
-    # batch_size = 64
     patience = 75
-    enable_euclidean_alignment = False
     enable_normalization = True
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    # device = "cpu"
     enable_ddp = False
-    enable_dp = False
 
     seed = 42
 
-    save_base = Path("~").expanduser() / "rosoku-log"
+    save_base = (
+        Path("~").expanduser()
+        / "Documents"
+        / "results"
+        / "classification"
+        / "erp-dl"
+        / "classifier"
+        / timestamp
+    )
     (save_base / "checkpoint").mkdir(parents=True, exist_ok=True)
     (save_base / "history").mkdir(parents=True, exist_ok=True)
 
     dataset = moabb.datasets.Kojima2024B_2stream()
+    epochs_base = (
+        Path("~").expanduser()
+        / "mne_data"
+        / f"MNE-{dataset.code}-data"
+        / "epochs"
+        / f"tmin-{tmin}_tmax-{tmax}_l_freq-{l_freq}_h_freq-{h_freq}_order-{order_filter}_resample-{resample}"
+    )
+    epochs_base.mkdir(parents=True, exist_ok=True)
 
     if (
         os.path.exists(
-            save_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"
+            epochs_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"
         )
     ) and (force_epoching is False):
         epochs = mne.read_epochs(
-            save_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"
+            epochs_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"
         )
         epochs.load_data()
     else:
@@ -142,28 +186,28 @@ if __name__ == "__main__":
             order_filter=order_filter,
         ).resample(resample)
         epochs.save(
-            (save_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"),
+            (epochs_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"),
             overwrite=True,
         )
 
         epochs = mne.read_epochs(
-            save_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"
+            epochs_base / f"dataset-{dataset.code}_sub-{subject}_epochs-epo.fif"
         )
         epochs.load_data()
 
-    for lr in [1e-2, 1e-3, 1e-4, 1e-5]:
+    for lr in [1e-2, 3e-3, 1e-3, 3e-4, 1e-4, 3e-5, 1e-5]:
         for batch_size in [4, 8, 16, 32, 64]:
-            for weight_decay in [1e-1, 1e-2, 1e-3]:
+            for weight_decay in [0, 1e-5, 1e-4, 1e-3, 1e-2]:
                 criterion = torch.nn.CrossEntropyLoss(
                     weight=torch.tensor([1.0, 3.0]).to(device)
                 )
-                # criterion = torch.nn.CrossEntropyLoss(weight=torch.tensor([3.0, 1.0]).to(device))
-                # criterion = torch.nn.CrossEntropyLoss()
                 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR
                 scheduler_params = {"T_max": n_epochs, "eta_min": 1e-6}
                 optimizer = torch.optim.AdamW
                 optimizer_params = {"lr": lr, "weight_decay": weight_decay}
-                early_stopping = rosoku.utils.EarlyStopping(patience=patience)
+                early_stopping = rosoku.utils.EarlyStopping(
+                    patience=patience, min_delta=1e-3
+                )
 
                 results = rosoku.deeplearning(
                     keywords_train=[f"run:{m}" for m in [1, 3, 5, 8]],
@@ -176,13 +220,14 @@ if __name__ == "__main__":
                         rosoku.utils.convert_epochs_to_ndarray,
                         label_keys={"marker:Target": 1, "marker:NonTarget": 0},
                     ),
-                    apply_func_proc_per_obj=True,
                     batch_size=batch_size,
                     n_epochs=n_epochs,
                     criterion=criterion,
                     optimizer=optimizer,
                     optimizer_params=optimizer_params,
-                    func_get_model=func_get_model,
+                    func_get_model=functools.partial(
+                        func_get_model, classifier=classifier
+                    ),
                     scheduler=scheduler,
                     scheduler_params=scheduler_params,
                     device=device,
@@ -190,10 +235,18 @@ if __name__ == "__main__":
                     func_proc_epochs=func_proc_epochs,
                     early_stopping=early_stopping,
                     enable_normalization=enable_normalization,
-                    name_classifier="EEGInceptionERP",
-                    history_fname=(save_base / "history" / f"sub-{subject}"),
-                    checkpoint_fname=(save_base / "checkpoint" / f"sub-{subject}.pth"),
-                    desc="EEGInceptionERP/drop_prob=0.25",
+                    name_classifier=classifier,
+                    history_fname=(
+                        save_base
+                        / "history"
+                        / f"sub-{subject}_lr-{lr}_bs-{batch_size}_wd-{weight_decay}"
+                    ),
+                    checkpoint_fname=(
+                        save_base
+                        / "checkpoint"
+                        / f"sub-{subject}_lr-{lr}_bs-{batch_size}_wd-{weight_decay}.pth"
+                    ),
+                    desc=classifier,
                     enable_wandb_logging=True,
                     wandb_params={
                         "config": {
@@ -204,10 +257,10 @@ if __name__ == "__main__":
                             "force_epoching": force_epoching,
                             "device": device,
                             "subject": subject,
-                            "model": "EEGInceptionERP",
+                            "model": classifier,
                         },
                         "project": "sandbox-kojima2024b-params-search",
-                        "name": f"sub-{subject}",
+                        "name": f"sub-{subject}_lr-{lr}_bs-{batch_size}_wd-{weight_decay}",
                     },
                     seed=seed,
                 )
@@ -225,3 +278,24 @@ if __name__ == "__main__":
                 print(f"BACC: {bacc}")
                 print(f"F1: {f1}")
                 print(f"AUC: {auc}")
+
+
+if __name__ == "__main__":
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    classifiers = [
+        "eegnet4.2",
+        "eegnet8.2",
+        "EEGInceptionERP",
+        "DeepConvNet",
+        "ShallowConvNet",
+    ]
+
+    resamples = [128, 128, 128, 250, 250]
+
+    subjects = list(range(1, 16))
+
+    for subject in subjects:
+        for classifier, resample in zip(classifiers, resamples):
+            main(timestamp, subject, classifier, resample)
