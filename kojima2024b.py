@@ -1,9 +1,11 @@
 import os
+import argparse
 import moabb
 import datetime
 import rosoku
 import torch
 from pathlib import Path
+import pandas as pd
 import mne
 import tag_mne as tm
 import braindecode
@@ -149,8 +151,8 @@ def main(timestamp, subject, classifier, resample):
         / "results"
         / "classification"
         / "erp-dl"
-        / "classifier"
         / timestamp
+        / classifier
     )
     (save_base / "checkpoint").mkdir(parents=True, exist_ok=True)
     (save_base / "history").mkdir(parents=True, exist_ok=True)
@@ -279,8 +281,34 @@ def main(timestamp, subject, classifier, resample):
                 print(f"F1: {f1}")
                 print(f"AUC: {auc}")
 
+                df_save_base = (
+                    Path("~").expanduser()
+                    / "Documents"
+                    / "results"
+                    / "classification"
+                    / "erp-dl"
+                    / timestamp
+                )
+
+                results["subject"] = [subject]
+                results["bacc"] = [bacc]
+                results["f1"] = [f1]
+                results["auc"] = [auc]
+                results["lr"] = [lr]
+                results["weight_decay"] = [weight_decay]
+                results["batch_size"] = [batch_size]
+
+                df_all.append(results)
+
+                df = pd.concat(df_all, axis=0, ignore_index=True)
+                df.to_pickle(df_save_base / "classification-results.pkl")
+                df.to_html(df_save_base / "classification-results.html")
+
 
 if __name__ == "__main__":
+
+    # parser = argparse.ArgumentParser()
+    # args = parser.parse_args()
 
     timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
 
@@ -291,6 +319,8 @@ if __name__ == "__main__":
         "DeepConvNet",
         "ShallowConvNet",
     ]
+
+    df_all = []
 
     resamples = [128, 128, 128, 250, 250]
 
